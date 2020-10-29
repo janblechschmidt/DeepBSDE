@@ -2,17 +2,20 @@ import logging
 import time
 import numpy as np
 import tensorflow as tf
-
+import sys
 DELTA_CLIP = 50.0
 
 
 class BSDESolver(object):
     """The fully connected neural network model."""
     def __init__(self, config, bsde):
+        # Extract configs
         self.eqn_config = config.eqn_config
         self.net_config = config.net_config
+        # Extract equation
         self.bsde = bsde
 
+        # NonsharedModel is called with bsde, not self.bsde?
         self.model = NonsharedModel(config, bsde)
         self.y_init = self.model.y_init
         lr_schedule = tf.keras.optimizers.schedules.PiecewiseConstantDecay(
@@ -62,32 +65,59 @@ class BSDESolver(object):
 
 class NonsharedModel(tf.keras.Model):
     def __init__(self, config, bsde):
+
+        # Call init of keras.Model
         super(NonsharedModel, self).__init__()
+
+        # Set config of class
         self.eqn_config = config.eqn_config
         self.net_config = config.net_config
+
+        # Set problem to solve
         self.bsde = bsde
+
+        # Random initialization of y, e.g. for HJB between 0, 1
+        # This is only one value ~ u(t_0,\xi)
         self.y_init = tf.Variable(np.random.uniform(low=self.net_config.y_init_range[0],
                                                     high=self.net_config.y_init_range[1],
                                                     size=[1])
                                   )
+
+        # Random initialization of z
+        # These are d values ~ \grad u(t_0,\xi)
         self.z_init = tf.Variable(np.random.uniform(low=-.1, high=.1,
                                                     size=[1, self.eqn_config.dim])
                                   )
 
+        # Set up num_time_interval - 1 many FeedForwardSubNets
         self.subnet = [FeedForwardSubNet(config) for _ in range(self.bsde.num_time_interval-1)]
 
     def call(self, inputs, training):
+        # Define method call for keras.Model
+
+        # Extract inputs
         dw, x = inputs
+
+        # Space of time points
         time_stamp = np.arange(0, self.eqn_config.num_time_interval) * self.bsde.delta_t
+
+        # Ones of same shape[0] as dw, in this case num_sample
         all_one_vec = tf.ones(shape=tf.stack([tf.shape(dw)[0], 1]), dtype=self.net_config.dtype)
+
+        # Repeat y_init value n_sample times
         y = all_one_vec * self.y_init
+        # print(y.shape) = (256,1)
         z = tf.matmul(all_one_vec, self.z_init)
+        # print(z.shape) = (256,100)
 
         for t in range(0, self.bsde.num_time_interval-1):
+            # Discrete BSDE time-stepping scheme aka Euler-Maruyama
+            # Next value approximation
             y = y - self.bsde.delta_t * (
                 self.bsde.f_tf(time_stamp[t], x[:, :, t], y, z)
             ) + tf.reduce_sum(z * dw[:, :, t], 1, keepdims=True)
-            z = self.subnet[t](x[:, :, t + 1], training) / self.bsde.dim
+            # Next gradient approximation
+            z = self.subnet[t](x[:, :, t+ 1], training) / self.bsde.dim
         # terminal time
         y = y - self.bsde.delta_t * self.bsde.f_tf(time_stamp[-1], x[:, :, -2], y, z) + \
             tf.reduce_sum(z * dw[:, :, -1], 1, keepdims=True)
@@ -117,7 +147,7 @@ class FeedForwardSubNet(tf.keras.Model):
 
     def call(self, x, training):
         """structure: bn -> (dense -> bn -> relu) * len(num_hiddens) -> dense -> bn"""
-        x = self.bn_layers[0](x, training)
+        x = self.bn_layers[0](x, training) # Needs to know if this is trainin
         for i in range(len(self.dense_layers) - 1):
             x = self.dense_layers[i](x)
             x = self.bn_layers[i+1](x, training)

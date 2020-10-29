@@ -2,3 +2,4 @@ output
 logs
 .idea
 *.zip
+__pycache__

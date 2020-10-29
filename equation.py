@@ -7,45 +7,62 @@ class Equation(object):
     """Base class for defining PDE related function."""
 
     def __init__(self, eqn_config):
+        # Global parameters from config
         self.dim = eqn_config.dim
         self.total_time = eqn_config.total_time
         self.num_time_interval = eqn_config.num_time_interval
         self.delta_t = self.total_time / self.num_time_interval
         self.sqrt_delta_t = np.sqrt(self.delta_t)
+        # Placeholder for exact solution
         self.y_init = None
 
     def sample(self, num_sample):
         """Sample forward SDE."""
+        # Method to draw samples, i.e. solves forward problem
         raise NotImplementedError
 
     def f_tf(self, t, x, y, z):
         """Generator function in the PDE."""
+        # Source term of pde
         raise NotImplementedError
 
     def g_tf(self, t, x):
         """Terminal condition of the PDE."""
+        # Terminal condition
         raise NotImplementedError
 
 
 class HJBLQ(Equation):
     """HJB equation in PNAS paper doi.org/10.1073/pnas.1718942115"""
     def __init__(self, eqn_config):
+        # This calls the __init__ from base class
         super(HJBLQ, self).__init__(eqn_config)
+        # This is \xi in the paper
         self.x_init = np.zeros(self.dim)
+        # Constant diffusion
         self.sigma = np.sqrt(2.0)
+        # Parameter of equation, factor in front of nonlinear term
         self.lambd = 1.0
 
     def sample(self, num_sample):
+        # Sample all rvs at once
         dw_sample = normal.rvs(size=[num_sample,
                                      self.dim,
                                      self.num_time_interval]) * self.sqrt_delta_t
-        x_sample = np.zeros([num_sample, self.dim, self.num_time_interval + 1])
+        # Prepare numpy array for paths
+        x_sample = np.zeros([num_sample,
+                             self.dim,
+                             self.num_time_interval + 1])
+        # Initialize first temporal layer with x_init
         x_sample[:, :, 0] = np.ones([num_sample, self.dim]) * self.x_init
+        # This is Euler Maruyama without any drift-term
         for i in range(self.num_time_interval):
             x_sample[:, :, i + 1] = x_sample[:, :, i] + self.sigma * dw_sample[:, :, i]
+        # Return all scaled random numbers as well as simulated paths
         return dw_sample, x_sample
 
     def f_tf(self, t, x, y, z):
+        # Corresponds to - lambda * norm(\grad u)^2
         return -self.lambd * tf.reduce_sum(tf.square(z), 1, keepdims=True)
 
     def g_tf(self, t, x):
