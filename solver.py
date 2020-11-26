@@ -45,6 +45,7 @@ class BSDESolver(object):
         y_terminal = self.model(inputs, training)
         delta = y_terminal - self.bsde.g_tf(self.bsde.total_time, x[:, :, -1])
         # use linear approximation outside the clipped range
+        # loss = tf.reduce_mean(tf.square(delta))
         loss = tf.reduce_mean(tf.where(tf.abs(delta) < DELTA_CLIP, tf.square(delta),
                                        2 * DELTA_CLIP * tf.abs(delta) - DELTA_CLIP ** 2))
 
@@ -61,6 +62,7 @@ class BSDESolver(object):
     def train_step(self, train_data):
         grad = self.grad(train_data, training=True)
         self.optimizer.apply_gradients(zip(grad, self.model.trainable_variables))
+
 
 
 class NonsharedModel(tf.keras.Model):
@@ -92,6 +94,7 @@ class NonsharedModel(tf.keras.Model):
         # Set up num_time_interval - 1 many FeedForwardSubNets
         self.subnet = [FeedForwardSubNet(config) for _ in range(self.bsde.num_time_interval-1)]
 
+
     def call(self, inputs, training):
         # Define method call for keras.Model
 
@@ -113,15 +116,14 @@ class NonsharedModel(tf.keras.Model):
         for t in range(0, self.bsde.num_time_interval-1):
             # Discrete BSDE time-stepping scheme aka Euler-Maruyama
             # Next value approximation
-            y = y - self.bsde.delta_t * (
-                self.bsde.f_tf(time_stamp[t], x[:, :, t], y, z)
-            ) + tf.reduce_sum(z * dw[:, :, t], 1, keepdims=True)
+            eta1 = - self.bsde.delta_t * self.bsde.f_tf(time_stamp[t], x[:, :, t], y, z)
+            eta2 = tf.reduce_sum(z * dw[:, :, t], 1, keepdims=True)
+            y = y + eta1 + eta2
             # Next gradient approximation
-            z = self.subnet[t](x[:, :, t+ 1], training) / self.bsde.dim
+            z = self.subnet[t](x[:, :, t + 1], training) / self.bsde.dim
         # terminal time
         y = y - self.bsde.delta_t * self.bsde.f_tf(time_stamp[-1], x[:, :, -2], y, z) + \
             tf.reduce_sum(z * dw[:, :, -1], 1, keepdims=True)
-
         return y
 
 
